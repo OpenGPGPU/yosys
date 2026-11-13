@@ -1,0 +1,59 @@
+# The feedback walk must use the matching data bit of every mux/pmux
+# branch, including aliased/repeated selectors and partially shared trees.
+read_verilog -icells <<EOT
+module nested(input clk, input [2:0] s, input [256:0] d,
+              output reg [256:0] q);
+  wire [256:0] left = s[0] ? q : d;
+  wire [256:0] right = s[1] ? d : q;
+  always @(posedge clk)
+    q <= s[2] ? left : right;
+endmodule
+
+module repeated(input clk, input [1:0] s, input [256:0] d,
+                output reg [256:0] q);
+  wire alias_s = s[0];
+  wire [256:0] left = alias_s ? q : d;
+  wire [256:0] right = s[1] ? d : q;
+  always @(posedge clk)
+    q <= s[0] ? left : right;
+endmodule
+
+module partial(input clk, input [2:0] s, input [16:0] d,
+               output reg [16:0] q, output [16:0] shared);
+  wire [16:0] left = s[0] ? {q[15:0], q[16]} : d;
+  wire [16:0] right = s[1] ? d : q;
+  assign shared = right;
+  always @(posedge clk)
+    q <= s[2] ? left : right;
+endmodule
+
+module parallel(input clk, input [1:0] s, input [16:0] d,
+                output [16:0] q);
+  wire [16:0] next;
+  wire alias_s = s[0];
+  \$pmux #(.WIDTH(17), .S_WIDTH(3)) mux (
+    .A(q), .B({q ^ d, d, q}), .S({alias_s, s[1], s[0]}), .Y(next));
+  \$dff #(.WIDTH(17), .CLK_POLARITY(1)) ff (.CLK(clk), .D(next), .Q(q));
+endmodule
+
+module top(input clk, input [2:0] s, input [256:0] d,
+           output [256:0] q0, q1, output [16:0] q2, q3, shared);
+  nested n(clk, s, d, q0);
+  repeated r(clk, s[1:0], d, q1);
+  partial p(clk, s, d[16:0], q2, shared);
+  parallel m(clk, s[1:0], d[16:0], q3);
+endmodule
+EOT
+
+hierarchy -top top
+flatten
+proc
+opt_clean -purge
+# The feedback rewrite deliberately changes internal mux inputs to undef.
+# Compare observable outputs/state, rather than matching those internal wires.
+rename -hide
+check -assert
+design -save original
+equiv_opt -undef -assert opt_dff -keepdc
+design -load original
+equiv_opt -undef -assert opt_dff

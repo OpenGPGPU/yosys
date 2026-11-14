@@ -212,8 +212,11 @@ struct CheckPass : public Pass {
 
 				void add_edge(RTLIL::Cell *cell, RTLIL::IdString from_port, int from_bit,
 							  RTLIL::IdString to_port, int to_bit, int) override {
-					SigSpec from_portsig = cell->getPort(from_port);
-					SigSpec to_portsig = cell->getPort(to_port);
+					// Only read one bit per edge. A mutable copy both duplicates a
+					// bit-vector port and unpacks a chunk on indexed access, making
+					// even a bitwise cell quadratic in its port width.
+					const SigSpec &from_portsig = cell->getPort(from_port);
+					const SigSpec &to_portsig = cell->getPort(to_port);
 					log_assert(from_bit >= 0 && from_bit < from_portsig.size());
 					log_assert(to_bit >= 0 && to_bit < to_portsig.size());
 					SigBit from = sigmap(from_portsig[from_bit]);

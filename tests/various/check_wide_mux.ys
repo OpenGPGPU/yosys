@@ -1,0 +1,21 @@
+# Detailed bitwise connectivity must distinguish a long acyclic chain from
+# one true loop, including on a wide port represented as a single chunk.
+read_verilog <<EOF
+module top(input s, input a, input [4095:0] d, output [4095:0] y);
+  assign y = s ? {y[4094:0], a} : d;
+endmodule
+EOF
+hierarchy -top top
+check -assert
+check -assert -force-detailed-loop-check
+
+design -reset
+read_verilog <<EOF
+module top(input s, input a, input [4095:0] d, output [4095:0] y);
+  assign y = s ? {y[4094:1], a, y[0]} : d;
+endmodule
+EOF
+hierarchy -top top
+logger -expect warning "found logic loop in module top:" 1
+logger -expect error "Found 1 problems in 'check -assert'" 1
+check -assert

@@ -247,16 +247,22 @@ struct OptDffWorker
 			return ret; // D not driven by MUX / MUX drives multiple loads
 
 		cell_int_t mbit = bit2mux.at(d);
-		RTLIL::SigSpec sig_a = sigmap(mbit.first->getPort(ID::A));
-		RTLIL::SigSpec sig_b = sigmap(mbit.first->getPort(ID::B));
+		int width = GetSize(mbit.first->getPort(ID::A)), index = mbit.second;
+		// This walk follows one output bit. Mapping the entire data ports for
+		// every FF bit makes a wide mux quadratic even when its tree is shallow.
+		// Snapshot the corresponding bit of each branch before recursing, just
+		// as the full-port mapping did: recursion can replace feedback with Sx.
+		RTLIL::SigBit sig_a = sigmap(mbit.first->getPort(ID::A)[index]);
 		RTLIL::SigSpec sig_s = sigmap(mbit.first->getPort(ID::S));
-		int width = GetSize(sig_a), index = mbit.second;
+		RTLIL::SigSpec sig_b;
+		for (int i = 0; i < GetSize(sig_s); i++)
+			sig_b.append(sigmap(mbit.first->getPort(ID::B)[i*width + index]));
 
 		// Traverse MUX tree
 		for (int i = 0; i < GetSize(sig_s); i++) {
 			if (path.count(sig_s[i]) && path.at(sig_s[i])) {
-				ret = find_muxtree_feedback_patterns(sig_b[i*width + index], q, path);
-				if (sig_b[i*width + index] == q) {
+				ret = find_muxtree_feedback_patterns(sig_b[i], q, path);
+				if (sig_b[i] == q) {
 					RTLIL::SigSpec s = mbit.first->getPort(ID::B);
 					s[i*width + index] = RTLIL::Sx;
 					mbit.first->setPort(ID::B, s);
@@ -277,10 +283,10 @@ struct OptDffWorker
 			path_this[sig_s[i]] = true;  // Assume S=1 for 'this' path
 
 			// Selected when S=1
-			for (auto &pat : find_muxtree_feedback_patterns(sig_b[i*width + index], q, path_this))
+			for (auto &pat : find_muxtree_feedback_patterns(sig_b[i], q, path_this))
 				ret.insert(pat);
 
-			if (sig_b[i*width + index] == q) {
+			if (sig_b[i] == q) {
 				RTLIL::SigSpec s = mbit.first->getPort(ID::B);
 				s[i*width + index] = RTLIL::Sx;
 				mbit.first->setPort(ID::B, s);
@@ -288,10 +294,10 @@ struct OptDffWorker
 		}
 
 		// Selected when S=0
-		for (auto &pat : find_muxtree_feedback_patterns(sig_a[index], q, path_else))
+		for (auto &pat : find_muxtree_feedback_patterns(sig_a, q, path_else))
 			ret.insert(pat);
 
-		if (sig_a[index] == q) {
+		if (sig_a == q) {
 			RTLIL::SigSpec s = mbit.first->getPort(ID::A);
 			s[index] = RTLIL::Sx;
 			mbit.first->setPort(ID::A, s);
